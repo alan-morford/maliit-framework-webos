@@ -498,7 +498,7 @@ struct MInputContextWestonIMProtocolConnectionPrivate
         xkb_led_index_t scroll_led = 0;
     } xkb;
 
-    Qt::KeyboardModifiers modifiers;
+    Maliit::XkbModifierTracker modifierTracker;
     int m_displayId;
 };
 
@@ -1031,6 +1031,10 @@ void MInputContextWestonIMProtocolConnectionPrivate::processKeyMap(uint32_t form
     xkb.num_led = xkb_map_led_get_index(xkb.keymap, XKB_LED_NAME_NUM);
     xkb.caps_led = xkb_map_led_get_index(xkb.keymap, XKB_LED_NAME_CAPS);
     xkb.scroll_led = xkb_map_led_get_index(xkb.keymap, XKB_LED_NAME_SCROLL);
+
+    // The state above holds nothing down; the Qt flags must not hold a Shift
+    // from the keyboard before this one either.
+    modifierTracker.keymapChanged(xkb.shift_mod, xkb.ctrl_mod, xkb.alt_mod);
 }
 
 struct RemoteKeysym {
@@ -1252,8 +1256,8 @@ void MInputContextWestonIMProtocolConnectionPrivate::processKeyEvent(uint32_t se
 
     // Per-event, not folded into the member: the compositor only sends
     // wl_keyboard.modifiers when a real modifier changes, so setting the bit
-    // on "modifiers" left it stuck on every subsequent key until then.
-    Qt::KeyboardModifiers eventModifiers = modifiers;
+    // on the tracked modifiers left it stuck on every subsequent key until then.
+    Qt::KeyboardModifiers eventModifiers = modifierTracker.modifiers();
     if (isKeypadKey(sym))
         eventModifiers |= Qt::KeypadModifier;
 
@@ -1293,14 +1297,7 @@ void MInputContextWestonIMProtocolConnectionPrivate::processKeyModifiers(uint32_
 {
     Q_UNUSED(serial);
 
-    uint32_t mods_lookup = mods_depressed | mods_latched;
-    modifiers = Qt::NoModifier;
-    if (Maliit::xkbModifierIsSet(mods_lookup, xkb.ctrl_mod))
-        modifiers |= Qt::ControlModifier;
-    if (Maliit::xkbModifierIsSet(mods_lookup, xkb.alt_mod))
-        modifiers |= Qt::AltModifier;
-    if (Maliit::xkbModifierIsSet(mods_lookup, xkb.shift_mod))
-        modifiers |= Qt::ShiftModifier;
+    modifierTracker.modifiersChanged(mods_depressed, mods_latched);
 
     if (xkb.state) {
         xkb_state_update_mask(xkb.state, mods_depressed, mods_latched, mods_locked, 0, 0, group);
