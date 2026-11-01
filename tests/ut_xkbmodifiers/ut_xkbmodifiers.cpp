@@ -42,6 +42,11 @@ private Q_SLOTS:
     void testFullMask();
     void testEmptyMask();
     void testRealisticModifierMask();
+
+    void testTrackerFollowsModifiers();
+    void testTrackerCountsLatchedNotLocked();
+    void testTrackerKeymapDropsHeldModifiers();
+    void testTrackerWithoutKeymapReportsNothing();
 };
 
 void Ut_XkbModifiers::testEachValidIndex()
@@ -127,6 +132,77 @@ void Ut_XkbModifiers::testRealisticModifierMask()
     QVERIFY(!Maliit::xkbModifierIsSet(depressed, shift));
     QVERIFY(Maliit::xkbModifierIsSet(depressed, ctrl));
     QVERIFY(!Maliit::xkbModifierIsSet(depressed, undefinedMod));
+}
+
+namespace {
+// The indices the default evdev keymap gives them.
+const uint32_t ShiftIndex = 0;
+const uint32_t LockIndex = 1;
+const uint32_t ControlIndex = 2;
+const uint32_t AltIndex = 3;
+}
+
+void Ut_XkbModifiers::testTrackerFollowsModifiers()
+{
+    Maliit::XkbModifierTracker tracker;
+    tracker.keymapChanged(ShiftIndex, ControlIndex, AltIndex);
+
+    tracker.modifiersChanged(1u << ShiftIndex, 0);
+    QCOMPARE(tracker.modifiers(), Qt::KeyboardModifiers(Qt::ShiftModifier));
+
+    tracker.modifiersChanged((1u << ControlIndex) | (1u << AltIndex), 0);
+    QCOMPARE(tracker.modifiers(), Qt::ControlModifier | Qt::AltModifier);
+
+    tracker.modifiersChanged(0, 0);
+    QCOMPARE(tracker.modifiers(), Qt::KeyboardModifiers(Qt::NoModifier));
+}
+
+void Ut_XkbModifiers::testTrackerCountsLatchedNotLocked()
+{
+    Maliit::XkbModifierTracker tracker;
+    tracker.keymapChanged(ShiftIndex, ControlIndex, AltIndex);
+
+    // A latched Shift applies to the next key; Caps Lock is a lock, not Shift.
+    tracker.modifiersChanged(0, 1u << ShiftIndex);
+    QCOMPARE(tracker.modifiers(), Qt::KeyboardModifiers(Qt::ShiftModifier));
+
+    tracker.modifiersChanged(1u << LockIndex, 0);
+    QCOMPARE(tracker.modifiers(), Qt::KeyboardModifiers(Qt::NoModifier));
+}
+
+/*
+ * The weston connection grabs a new keyboard for every input method context,
+ * and each arrives with a keymap and a fresh xkb_state holding nothing down.
+ * A Shift held when the last context ended must not outlive it in the flags
+ * handed to the plugins.
+ */
+void Ut_XkbModifiers::testTrackerKeymapDropsHeldModifiers()
+{
+    Maliit::XkbModifierTracker tracker;
+    tracker.keymapChanged(ShiftIndex, ControlIndex, AltIndex);
+    tracker.modifiersChanged(1u << ShiftIndex, 0);
+    QCOMPARE(tracker.modifiers(), Qt::KeyboardModifiers(Qt::ShiftModifier));
+
+    tracker.keymapChanged(ShiftIndex, ControlIndex, AltIndex);
+    QCOMPARE(tracker.modifiers(), Qt::KeyboardModifiers(Qt::NoModifier));
+
+    // And the new keymap's indices are the ones used from then on.
+    tracker.keymapChanged(5, 6, 7);
+    tracker.modifiersChanged(1u << ShiftIndex, 0);
+    QCOMPARE(tracker.modifiers(), Qt::KeyboardModifiers(Qt::NoModifier));
+    tracker.modifiersChanged(1u << 5, 0);
+    QCOMPARE(tracker.modifiers(), Qt::KeyboardModifiers(Qt::ShiftModifier));
+}
+
+void Ut_XkbModifiers::testTrackerWithoutKeymapReportsNothing()
+{
+    Maliit::XkbModifierTracker tracker;
+    tracker.modifiersChanged(0xffffffffu, 0xffffffffu);
+    QCOMPARE(tracker.modifiers(), Qt::KeyboardModifiers(Qt::NoModifier));
+
+    tracker.keymapChanged(XkbModInvalid, XkbModInvalid, XkbModInvalid);
+    tracker.modifiersChanged(0xffffffffu, 0xffffffffu);
+    QCOMPARE(tracker.modifiers(), Qt::KeyboardModifiers(Qt::NoModifier));
 }
 
 QTEST_GUILESS_MAIN(Ut_XkbModifiers)
